@@ -20,6 +20,7 @@ import {
   fetchOmniDialogs,
   fetchOmniKnowledge,
   fetchOmniInbound,
+  checkOmniInboundLine,
   fetchOmniInboundReport,
   fetchOmniChatReport,
   fetchOmniMessengers,
@@ -318,6 +319,7 @@ const state = {
     chatReport: [],
     channelsByCampaign: {},
     inboundByCampaign: {},
+    inboundSipDead: false,
     loaded: {},
   },
   telephony: (() => {
@@ -7729,6 +7731,28 @@ function bindCampaignForms() {
   }
 }
 
+/**
+ * E2-045: «Подключения» has no campaign context, but the inbound check is per
+ * `campaign_id`. SIP inbound registration is company-wide infrastructure, not
+ * per-DID (see handoff), so probing the first campaign with an enabled line is
+ * enough to know whether the shared line is up. No enabled line → nothing to
+ * check, banner stays off. `live_credentials_required` (no live probe in this
+ * environment) is not the same as a real outage — it must not light the banner.
+ */
+async function checkInboundSipHealth() {
+  if (!state.ui.campaignsLoaded && !state.ui.campaignsLoading) {
+    await refreshCampaigns().catch(() => {});
+  }
+  for (const camp of state.campaigns || []) {
+    const line = await fetchOmniInbound(camp.id, state.session).catch(() => null);
+    if (!line?.enabled) continue;
+    state.omni.inboundByCampaign[camp.id] = line;
+    const result = await checkOmniInboundLine(camp.id, state.session).catch(() => null);
+    return result?.connection_status === "error";
+  }
+  return false;
+}
+
 async function hydrateOmni(cabinet) {
   if (!hasApi() || !state.session) return;
   const page = cabinet?.page;
@@ -7767,6 +7791,7 @@ async function hydrateOmni(cabinet) {
   if ((page === "connections" || page === "integrations") && !state.omni.loaded.messengers) {
     state.omni.messengers = await fetchOmniMessengers(state.session).catch(() => ({ providers: [] }));
     state.omni.loaded.messengers = true;
+    state.omni.inboundSipDead = await checkInboundSipHealth();
     render();
     return;
   }

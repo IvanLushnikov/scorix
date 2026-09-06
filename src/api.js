@@ -346,6 +346,14 @@ export async function saveOmniInbound(campaignId, body, session) {
   });
 }
 
+/** Live "проверить связь" for the inbound line — E2-045, separate from PUT save. */
+export async function checkOmniInboundLine(campaignId, session) {
+  return apiFetch(`/api/cabinet/campaigns/${encodeURIComponent(campaignId)}/inbound/check`, {
+    method: "POST",
+    session,
+  });
+}
+
 export async function fetchOmniInboundReport(session) {
   return apiFetch("/api/cabinet/reports/inbound", { session });
 }

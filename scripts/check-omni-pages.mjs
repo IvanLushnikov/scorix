@@ -61,4 +61,17 @@ assert.match(pages, /канал error/);
 assert.match(app, /Id можно не заполнять — поищем по номеру\./);
 assert.match(app, /telegram,vk/);
 
+// E2-045: "Подключения" SIP banner must come from a real inbound/check probe, not a
+// flag nobody sets (see docs/handoff/fe/E2-045-connections-sip-health.md, New repo).
+assert.match(pages, /data-inbound-sip-banner/);
+assert.match(pages, /Входящая линия SIP не поднялась\. Исходящий обзвон на том же транке своими правилами\./);
+assert.match(api, /inbound\/check/);
+assert.match(api, /checkOmniInboundLine/);
+assert.match(app, /checkOmniInboundLine/);
+assert.match(app, /checkInboundSipHealth/);
+assert.match(app, /inboundSipDead\s*=\s*await checkInboundSipHealth\(\)/);
+// live_credentials_required (no live probe in this env) must not be treated as a real outage.
+assert.match(app, /connection_status\s*===\s*"error"/);
+assert.doesNotMatch(app, /inboundSipDead\s*=\s*true/);
+
 console.log("omni-pages-contract ok");
