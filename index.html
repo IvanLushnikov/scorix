@@ -16,9 +16,16 @@
         var path = location.pathname || "/";
         var m = path.match(/^(\/lk)(?:\/|$)/);
         window.SCORIX_BASE_PATH = m ? m[1] : "";
-        // API base: same origin by default. Override with window.SCORIX_API_BASE before this
-        // script if the cabinet is hosted separately from the API (set CORS origins on the API).
-        // No hardcoded third-party Pages → prod API mapping.
+        // Гибрид: морда на GitHub Pages → API на сервере (HTTPS по IP через sslip.io,
+        // пока свой домен не повешен). CORS на API обязан включать
+        // https://ivanlushnikov.github.io. Same-origin /lk на своём домене —
+        // location.origin.
+        if (
+          !window.SCORIX_API_BASE &&
+          location.hostname === "ivanlushnikov.github.io"
+        ) {
+          window.SCORIX_API_BASE = "https://37.27.2.86.sslip.io";
+        }
         if (!window.SCORIX_API_BASE) {
           window.SCORIX_API_BASE = location.origin;
         }

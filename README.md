@@ -8,7 +8,8 @@
 
 https://ivanlushnikov.github.io/Scorix/
 
-На своём домене кабинет ожидается по пути `/lk/` (лендинг на `/`). Локально и на GitHub Pages префикс не нужен.
+На Pages кабинет ходит в API `https://37.27.2.86.sslip.io` (сервер по IP, пока свой домен не подключен; см. `index.html` → `SCORIX_API_BASE`).  
+На своём домене кабинет ожидается по пути `/lk/` (лендинг на `/`) — same-origin `/api`. Локально и на GitHub Pages префикс `/lk` не нужен.
 
 Вход без API (stub):
 
