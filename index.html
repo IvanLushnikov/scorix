@@ -16,23 +16,78 @@
         var path = location.pathname || "/";
         var m = path.match(/^(\/lk)(?:\/|$)/);
         window.SCORIX_BASE_PATH = m ? m[1] : "";
-        // Гибрид: морда на GitHub Pages → API на сервере (HTTPS по IP через sslip.io,
-        // пока свой домен не повешен). CORS на API обязан включать
-        // https://ivanlushnikov.github.io. Same-origin /lk на своём домене —
-        // location.origin.
-        if (
-          !window.SCORIX_API_BASE &&
-          location.hostname === "ivanlushnikov.github.io"
-        ) {
-          window.SCORIX_API_BASE = "https://37.27.2.86.sslip.io";
-        }
-        if (!window.SCORIX_API_BASE) {
-          window.SCORIX_API_BASE = location.origin;
+        var search = new URLSearchParams(location.search || "");
+        var hashQ = String(location.hash || "").split("?")[1] || "";
+        var hashParams = new URLSearchParams(hashQ);
+        var wantStub = search.get("stub") === "1" || hashParams.get("stub") === "1";
+        // Локальный превью UI без живого API: ?stub=1 → сразу кабинет.
+        if (wantStub) {
+          window.SCORIX_API_BASE = "";
+          window.SCORIX_FORCE_STUB = true;
+          try {
+            var camp = {
+              id: "camp-preview-1",
+              name: "Демо-кампания",
+              goal: "Показать кабинет без API",
+              details: "Локальный stub для просмотра UI кабинета Scorix",
+              dial_state: "draft",
+              preview: {
+                greeting: "Здравствуйте, это Scorix",
+                says: "Коротко покажем кабинет без живого API",
+                replies: "Отвечает на вопросы по демо",
+                tone: "спокойный",
+              },
+              contacts: [
+                { id: "ct-1", phone: "+79001110001", name: "Алексей", status: "в_процессе" },
+                { id: "ct-2", phone: "+79001110002", name: "Мария", status: "завершённые_темы" },
+                { id: "ct-3", phone: "+79001110003", name: "Игорь", status: "недозвон" },
+              ],
+              schedule: {
+                days: ["mon", "tue", "wed", "thu", "fri"],
+                from: "10:00",
+                to: "18:00",
+                tz: "Europe/Moscow",
+              },
+              retries: 2,
+            };
+            sessionStorage.setItem("scx_session", "preview-stub-session");
+            localStorage.setItem("scx_role", "company");
+            localStorage.setItem("scx_locked", "0");
+            localStorage.setItem("scx_co_balance", "500");
+            localStorage.setItem("scx_co_tariff", "5");
+            localStorage.setItem("scx_campaigns", JSON.stringify([camp]));
+            localStorage.setItem("scx_active_campaign", camp.id);
+          } catch (e) {
+            /* private mode */
+          }
+          var hash = location.hash || "";
+          var hashPath = hash.replace(/^#/, "").split("?")[0] || "";
+          if (!hashPath || hashPath === "/" || hashPath.indexOf("/login") === 0) {
+            history.replaceState(
+              null,
+              "",
+              location.pathname + location.search + "#/cabinet/campaigns"
+            );
+          }
+        } else {
+          // Гибрид: морда на GitHub Pages → API на сервере (HTTPS по IP через sslip.io,
+          // пока свой домен не повешен). CORS на API обязан включать
+          // https://ivanlushnikov.github.io. Same-origin /lk на своём домене —
+          // location.origin.
+          if (
+            !window.SCORIX_API_BASE &&
+            location.hostname === "ivanlushnikov.github.io"
+          ) {
+            window.SCORIX_API_BASE = "https://37.27.2.86.sslip.io";
+          }
+          if (!window.SCORIX_API_BASE) {
+            window.SCORIX_API_BASE = location.origin;
+          }
         }
         var assetBase = window.SCORIX_BASE_PATH || ".";
         var link = document.createElement("link");
         link.rel = "stylesheet";
-        link.href = assetBase + "/src/styles.css";
+        link.href = assetBase + "/src/styles.css?v=cobalt-strike-20260907b";
         document.head.appendChild(link);
       })();
     </script>
@@ -44,7 +99,7 @@
         var assetBase = window.SCORIX_BASE_PATH || ".";
         var s = document.createElement("script");
         s.type = "module";
-        s.src = assetBase + "/src/app.js";
+        s.src = assetBase + "/src/app.js?v=cobalt-strike-20260907b";
         document.body.appendChild(s);
       })();
     </script>

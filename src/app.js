@@ -17,7 +17,6 @@ import {
   fetchOmniWebhook,
   fetchOmniWebhookJournal,
   fetchOmniUsage,
-  fetchOmniDialogs,
   fetchOmniKnowledge,
   fetchOmniInbound,
   checkOmniInboundLine,
@@ -28,17 +27,18 @@ import {
 } from "./api.js";
 import { otpauthQrDataUrl } from "./lib/totp-qr.js";
 import {
-  pageConnections,
   pageWebhook,
   pageUsage,
   pageKnowledge,
-  pageDialogs,
   pageCrm,
   pageInboundLine,
   blockChannels,
   pageChatReport,
   contactCardBlocks,
   campaignKnowledgeBlock,
+  connectionsSegmentsHtml,
+  pageMessengersSegment,
+  deliveryStatusBlock,
 } from "./omni-pages.js";
 import { bindOmniPages } from "./omni-bind.js";
 
@@ -122,13 +122,6 @@ function writePendingEmail(email) {
   }
 }
 
-function routeQuery() {
-  const path = route();
-  const q = path.indexOf("?");
-  if (q === -1) return new URLSearchParams();
-  return new URLSearchParams(path.slice(q + 1));
-}
-
 function cabinetBasePath() {
   if (typeof window !== "undefined" && typeof window.SCORIX_BASE_PATH === "string") {
     return window.SCORIX_BASE_PATH;
@@ -202,31 +195,41 @@ const CABINET_TABS = [
   { id: "connections", label: "Подключения", href: "#/cabinet/connections" },
   { id: "knowledge", label: "База знаний", href: "#/cabinet/knowledge" },
   { id: "analytics", label: "Отчёты", href: "#/cabinet/analytics" },
-  { id: "usage", label: "Использование", href: "#/cabinet/usage" },
-  { id: "tariffs", label: "Тарифы", href: "#/cabinet/tariffs" },
-  { id: "webhook", label: "Webhook", href: "#/cabinet/webhook" },
-  { id: "crm", label: "CRM", href: "#/cabinet/crm" },
-  { id: "dialogs", label: "Диалоги", href: "#/cabinet/dialogs" },
   { id: "account", label: "Настройки", href: "#/cabinet/account" },
 ];
 
 const WORKSPACE_TABS = [
   { id: "overview", label: "Обзор" },
   { id: "channels", label: "Каналы" },
-  { id: "contacts", label: "Контакты" },
   { id: "scenario", label: "Сценарий" },
-  { id: "calls", label: "Звонки" },
-  { id: "inbound", label: "Входящие" },
-  { id: "chat", label: "Чат" },
+  { id: "contacts", label: "Контакты" },
+  { id: "progress", label: "Ход" },
   { id: "results", label: "Результаты" },
-  { id: "settings", label: "Настройки" },
+];
+
+const ACCOUNT_SEGMENTS = [
+  { id: "profile", label: "Аккаунт" },
+  { id: "security", label: "Безопасность" },
+  { id: "tariffs", label: "Тарифы" },
+];
+
+const REPORTS_SEGMENTS = [
+  { id: "summary", label: "Сводка" },
+  { id: "usage", label: "Использование" },
 ];
 
 const ADMIN_TABS = [
   { id: "companies", label: "Компании", href: "#/admin" },
-  { id: "integrations", label: "Интеграции", href: "#/admin/integrations" },
+  { id: "integrations", label: "Сервисы голоса", href: "#/admin/integrations" },
   { id: "settings", label: "Настройки", href: "#/admin/settings" },
 ];
+
+const WORKSPACE_TAB_ALIASES = {
+  calls: "progress",
+  inbound: "channels",
+  chat: "results",
+  settings: "overview",
+};
 
 function loadJson(key, fallback, store = localStorage) {
   try {
@@ -379,6 +382,10 @@ const state = {
     purgeDataPending: false,
     contactsEmptyAfterPurge: false,
     workspaceTab: "overview",
+    resultsSub: "outcomes",
+    accountSegment: "profile",
+    reportsSegment: "summary",
+    connectionsReturn: "",
     omniLoaded: false,
     mobileNavOpen: false,
     consentOpen: false,
@@ -488,6 +495,15 @@ function route() {
   return (location.hash || "#/login").replace(/^#/, "") || "/login";
 }
 
+function routePath(path = route()) {
+  return String(path || "").split("?")[0] || "/";
+}
+
+function routeQuery(path = route()) {
+  const q = String(path || "").split("?")[1] || "";
+  return new URLSearchParams(q);
+}
+
 function navigate(path) {
   location.hash = path.startsWith("#") ? path : `#${path}`;
 }
@@ -505,35 +521,90 @@ function matchPath(path, pattern) {
 }
 
 /** Parse cabinet hash into page descriptor. */
-function parseCabinet(path) {
+function parseCabinet(rawPath) {
+  const path = routePath(rawPath);
+  const query = routeQuery(rawPath);
   if (path === "/cabinet" || path === "/cabinet/campaigns") return { tab: "campaigns", page: "list" };
   if (path === "/cabinet/campaigns/new") return { tab: "campaigns", page: "new" };
   const ws = matchPath(path, "/cabinet/campaigns/:id");
   if (ws?.id && ws.id !== "new") return { tab: "campaigns", page: "workspace", id: ws.id };
-  if (path === "/cabinet/integrations" || path === "/cabinet/connections") return { tab: "connections", page: "connections" };
+  const connSeg = matchPath(path, "/cabinet/connections/:segment");
+  if (connSeg?.segment) {
+    const seg = ["telephony", "messengers", "crm", "delivery"].includes(connSeg.segment)
+      ? connSeg.segment
+      : "telephony";
+    return { tab: "connections", page: "connections", segment: seg, returnTo: query.get("return") || "" };
+  }
+  if (path === "/cabinet/integrations" || path === "/cabinet/connections") {
+    return { tab: "connections", page: "connections", segment: "telephony", returnTo: query.get("return") || "" };
+  }
   if (path === "/cabinet/knowledge") return { tab: "knowledge", page: "knowledge" };
-  if (path === "/cabinet/usage") return { tab: "usage", page: "usage" };
-  if (path === "/cabinet/webhook") return { tab: "webhook", page: "webhook" };
-  if (path === "/cabinet/crm") return { tab: "crm", page: "crm" };
-  if (path === "/cabinet/dialogs") return { tab: "dialogs", page: "dialogs" };
+  if (path === "/cabinet/usage") return { tab: "analytics", page: "analytics", segment: "usage" };
+  if (path === "/cabinet/webhook") return { tab: "connections", page: "connections", segment: "delivery" };
+  if (path === "/cabinet/crm") return { tab: "connections", page: "connections", segment: "crm" };
   if (path === "/cabinet/inbound") return { tab: "connections", page: "inbound" };
-  if (path === "/cabinet/analytics") return { tab: "analytics", page: "analytics" };
-  if (path === "/cabinet/tariffs") return { tab: "tariffs", page: "tariffs" };
-  if (path === "/cabinet/account") return { tab: "account", page: "account" };
+  if (path === "/cabinet/analytics") {
+    return { tab: "analytics", page: "analytics", segment: query.get("seg") === "usage" ? "usage" : "summary" };
+  }
+  const accSeg = matchPath(path, "/cabinet/account/:segment");
+  if (accSeg?.segment) {
+    const seg = ["profile", "security", "tariffs"].includes(accSeg.segment) ? accSeg.segment : "profile";
+    return { tab: "account", page: "account", segment: seg };
+  }
+  if (path === "/cabinet/tariffs") return { tab: "account", page: "account", segment: "tariffs" };
+  if (path === "/cabinet/account") return { tab: "account", page: "account", segment: "profile" };
   return null;
 }
 
 /** Redirect legacy / unknown deep links; keep valid cabinet routes. */
-function normalizeRoute(path) {
+function normalizeRoute(rawPath) {
+  const path = routePath(rawPath);
   if (path.startsWith("/cabinet")) {
     if (path === "/cabinet") {
       navigate("/cabinet/campaigns");
       return true;
     }
-    if (parseCabinet(path)) {
-      const parsed = parseCabinet(path);
+    if (path === "/cabinet/usage") {
+      navigate("/cabinet/analytics?seg=usage");
+      return true;
+    }
+    if (path === "/cabinet/tariffs") {
+      navigate("/cabinet/account/tariffs");
+      return true;
+    }
+    if (path === "/cabinet/webhook") {
+      navigate("/cabinet/connections/delivery");
+      return true;
+    }
+    if (path === "/cabinet/crm") {
+      navigate("/cabinet/connections/crm");
+      return true;
+    }
+    if (path === "/cabinet/dialogs") {
+      navigate("/cabinet/campaigns");
+      return true;
+    }
+    if (path === "/cabinet/integrations") {
+      navigate("/cabinet/connections/telephony");
+      return true;
+    }
+    if (path === "/cabinet/connections") {
+      navigate("/cabinet/connections/telephony");
+      return true;
+    }
+    if (parseCabinet(rawPath)) {
+      const parsed = parseCabinet(rawPath);
       if (parsed.page === "workspace") setActiveCampaignId(parsed.id);
       if (parsed.page === "new") state.ui.showNewCampaign = true;
+      if (parsed.page === "connections" && parsed.returnTo) {
+        state.ui.connectionsReturn = parsed.returnTo;
+      }
+      if (parsed.page === "account" && parsed.segment) {
+        state.ui.accountSegment = parsed.segment;
+      }
+      if (parsed.page === "analytics" && parsed.segment) {
+        state.ui.reportsSegment = parsed.segment;
+      }
       return false;
     }
     const legacySub =
@@ -622,7 +693,7 @@ function balanceChipHtml({ className = "" } = {}) {
   const approx = bal != null && tariff > 0 ? Math.floor(bal / tariff) : null;
   const hint =
     bal == null || tariffRaw == null ? "загружаем…" : approx != null ? `≈ ${approx} мин` : "тариф не задан";
-  return `<a class="balance-chip${className ? ` ${className}` : ""}" href="#/cabinet/tariffs" title="Баланс и тариф">
+  return `<a class="balance-chip${className ? ` ${className}` : ""}" href="#/cabinet/account/tariffs" title="Баланс и тариф">
     <span class="balance-chip-value">${escapeHtml(bal == null ? "—" : String(bal))} ₽</span>
     <span class="balance-chip-sep" aria-hidden="true">·</span>
     <span class="balance-chip-tariff">${tariff > 0 ? `${escapeHtml(String(tariff))} ₽/мин` : "—"}</span>
@@ -685,7 +756,7 @@ function readinessProgress(camp) {
 
 function campaignNextStep(camp) {
   const st = operationalStatus(camp);
-  if (st.code === "running") return { label: "Следите за ходом обзвона", tab: "calls" };
+  if (st.code === "running") return { label: "Следите за ходом обзвона", tab: "progress" };
   if (st.code === "paused") return { label: "Продолжить или остановить", tab: "overview" };
   if (st.code === "stopped") return { label: "Посмотреть результаты", tab: "results" };
   const item = launchChecklist(camp).find((i) => !i.ok);
@@ -696,7 +767,7 @@ function campaignNextStep(camp) {
     telephony: state.telephony.status === "ok" ? "Настроить расписание" : "Настроить телефонию",
     balance: "Пополнить баланс",
   };
-  return { label: map[item.id] || item.action || "Продолжить настройку", tab: item.jump === "integrations" ? "settings" : item.jump === "sec-contacts" ? "contacts" : "overview" };
+  return { label: map[item.id] || item.action || "Продолжить настройку", tab: item.jump === "integrations" ? "overview" : item.jump === "sec-contacts" ? "contacts" : "overview" };
 }
 
 function campaignsListStats() {
@@ -733,13 +804,13 @@ function contactPipelineStats(camp) {
 function telephonyOnboardingBlock() {
   const t = state.telephony;
   if (t.checking || t.status === "ok") return "";
-  return `<div class="onboard-block" role="region" aria-label="Подключение телефонии">
+  return `<div class="onboard-block banner-enter" role="region" aria-label="Подключение телефонии" data-testid="sip-onboard-banner">
     <div class="onboard-block-copy">
       <p class="onboard-block-kicker">Первый шаг</p>
-      <h3 class="onboard-block-title">Подключите телефонию — без неё обзвон не запустится</h3>
-      <p class="onboard-block-lead">Укажите SIP вашей АТС — займёт пару минут, зато кампании смогут звонить клиентам.</p>
+      <h3 class="onboard-block-title">Подключите телефонию, чтобы запускать обзвон</h3>
+      <p class="onboard-block-lead">Укажите SIP вашей АТС — займёт пару минут.</p>
     </div>
-    <a class="btn onboard-block-cta" href="#/cabinet/integrations">Подключить телефонию</a>
+    <a class="btn secondary onboard-block-cta" href="#/cabinet/connections/telephony">Подключить телефонию</a>
   </div>`;
 }
 
@@ -749,9 +820,9 @@ function launchChecklistHtml(camp) {
     .map((item) => {
       const jumpAttr =
         item.jump === "integrations"
-          ? `href="#/cabinet/integrations"`
+          ? `href="#/cabinet/connections/telephony"`
           : item.jump === "tariffs"
-            ? `href="#/cabinet/tariffs"`
+            ? `href="#/cabinet/account/tariffs"`
             : item.jump === "sec-schedule"
               ? `type="button" data-open-schedule="1"`
               : item.jump
@@ -969,11 +1040,11 @@ function dialModeBannerHtml() {
 }
 
 function appTabsHtml(activeTab, tabs = CABINET_TABS) {
-  return `<nav class="app-tabs app-tabs-desk" aria-label="Разделы кабинета">
+  return `<nav class="app-nav-side" aria-label="Разделы кабинета">
     ${tabs
       .map(
         (t) =>
-          `<a href="${t.href}" class="${t.id === activeTab ? "active" : ""}">${escapeHtml(t.label)}</a>`
+          `<a href="${t.href}" class="app-nav-link${t.id === activeTab ? " active" : ""}"${t.id === activeTab ? ' aria-current="page"' : ""}>${escapeHtml(t.label)}</a>`
       )
       .join("")}
   </nav>`;
@@ -991,23 +1062,30 @@ function mobileNavHtml(activeTab, tabs = CABINET_TABS) {
 }
 
 function cabinetShell(activeTab, bodyHtml) {
-  return `<div class="page-shell page-shell-desk">
-    <header class="page-topbar page-topbar-desk">
-      <p class="brand"><span class="brand-mark" aria-hidden="true"></span>Scorix</p>
+  return `<div class="page-shell page-shell-desk page-shell-rail">
+    <aside class="page-rail" aria-label="Навигация">
+      <p class="brand brand-rail"><span class="brand-mark" aria-hidden="true"></span>Scorix</p>
       ${appTabsHtml(activeTab)}
-      ${mobileNavHtml(activeTab)}
-      <div class="page-topbar-actions">
-        ${balanceChipHtml({ className: "balance-chip--header" })}
-        ${themeControls()}
+      <div class="page-rail-foot">
         <button class="btn ghost page-logout" id="logout" type="button">Выйти</button>
       </div>
-    </header>
-    <main class="page page-desk">
-      ${impersonateBanner()}
-      ${lockedBanner()}
-      ${flashHtml()}
-      ${bodyHtml}
-    </main>
+    </aside>
+    <div class="page-main">
+      <header class="page-topbar page-topbar-desk page-topbar-compact">
+        ${mobileNavHtml(activeTab)}
+        <div class="page-topbar-actions">
+          ${balanceChipHtml({ className: "balance-chip--header" })}
+          ${themeControls()}
+          <button class="btn ghost page-logout page-logout-mobile" id="logout-mobile" type="button">Выйти</button>
+        </div>
+      </header>
+      <main class="page page-desk">
+        ${impersonateBanner()}
+        ${lockedBanner()}
+        ${flashHtml()}
+        ${bodyHtml}
+      </main>
+    </div>
   </div>`;
 }
 
@@ -1015,31 +1093,38 @@ function adminShell(activeTab = "companies") {
   let body;
   if (activeTab === "settings") {
     body = `<section class="flow-section" id="sec-admin-settings">
-        <h2>Настройки продукта</h2>
+        <h2 class="section-title-bar">Настройки продукта</h2>
         ${adminSettings()}
       </section>`;
   } else if (activeTab === "integrations") {
     body = `<section class="flow-section" id="sec-admin-integrations">
-        <h2>Интеграции</h2>
-        <p class="hint">Платформенные модели и речь. Не путать с телефонией компании.</p>
+        <h2 class="section-title-bar">Сервисы голоса</h2>
+        <p class="hint">Платформенные модели и речь. Не путать с подключениями компании.</p>
         ${adminIntegrationsPanel()}
       </section>`;
   } else {
     body = `${adminNewCompany()}${adminCompanyList()}`;
   }
-  return `<div class="page-shell">
-    <header class="page-topbar">
-      <p class="brand">Scorix · Админка</p>
+  return `<div class="page-shell page-shell-rail">
+    <aside class="page-rail" aria-label="Навигация админки">
+      <p class="brand brand-rail">Scorix · Админка</p>
       ${appTabsHtml(activeTab, ADMIN_TABS)}
-      <div class="page-topbar-actions">
-        ${themeControls()}
+      <div class="page-rail-foot">
         <button class="btn secondary" id="logout" type="button">Выйти</button>
       </div>
-    </header>
-    <main class="page">
-      ${flashHtml()}
-      ${body}
-    </main>
+    </aside>
+    <div class="page-main">
+      <header class="page-topbar page-topbar-compact">
+        <div class="page-topbar-actions">
+          ${themeControls()}
+          <button class="btn secondary page-logout-mobile" id="logout-mobile" type="button">Выйти</button>
+        </div>
+      </header>
+      <main class="page">
+        ${flashHtml()}
+        ${body}
+      </main>
+    </div>
   </div>`;
 }
 
@@ -2392,22 +2477,15 @@ function cabinetBody(parsed) {
     state.ui.scheduleDrawerOpen = false;
     state.ui.launchReasonsDrawerOpen = false;
     state.ui.workspaceTab = "overview";
+    state.ui.resultsSub = "outcomes";
   }
-  if (parsed.page === "integrations" || parsed.page === "connections") {
-    return pageConnections({
-      sipDead: Boolean(state.omni.inboundSipDead),
-      messengers: state.omni.messengers,
-    }) + sectionTelephony();
+  if (parsed.page === "connections") {
+    return pageConnectionsHub(parsed.segment || "telephony", parsed.returnTo || state.ui.connectionsReturn || "");
   }
   if (parsed.page === "knowledge") return pageKnowledge({ knowledge: state.omni.knowledge });
-  if (parsed.page === "usage") return pageUsage({ usage: state.omni.usage });
-  if (parsed.page === "webhook") return pageWebhook({ hook: state.omni.webhook, journal: state.omni.journal });
-  if (parsed.page === "crm") return pageCrm({ crm: state.omni.crm });
-  if (parsed.page === "dialogs") return pageDialogs({ items: state.omni.dialogs, empty: !state.omni.dialogs?.length });
   if (parsed.page === "inbound") return pageInboundLine({ line: null, report: state.omni.inboundReport, formless: true });
-  if (parsed.page === "analytics") return pageAnalytics();
-  if (parsed.page === "tariffs") return pageTariffs();
-  if (parsed.page === "account") return pageAccount();
+  if (parsed.page === "analytics") return pageAnalytics(parsed.segment || state.ui.reportsSegment || "summary");
+  if (parsed.page === "account") return pageAccount(parsed.segment || state.ui.accountSegment || "profile");
   if (parsed.page === "new") return pageCampaignNew();
   if (parsed.page === "workspace") {
     const camp = campaignById(parsed.id);
@@ -2423,6 +2501,29 @@ function cabinetBody(parsed) {
     return campaignWorkspace(camp);
   }
   return pageCampaignList();
+}
+
+function pageConnectionsHub(segment = "telephony", returnTo = "") {
+  const sipDead = Boolean(state.omni.inboundSipDead);
+  let body = "";
+  if (segment === "messengers") {
+    body = pageMessengersSegment({ messengers: state.omni.messengers, returnTo });
+  } else if (segment === "crm") {
+    body = pageCrm({ crm: state.omni.crm });
+  } else if (segment === "delivery") {
+    body = pageWebhook({ hook: state.omni.webhook, journal: state.omni.journal });
+  } else {
+    body = telephonySegmentBody();
+  }
+  const banner = sipDead
+    ? `<p class="banner error banner-enter" data-inbound-sip-banner>Входящая линия SIP не поднялась. Исходящий обзвон на том же транке своими правилами.</p>`
+    : "";
+  return deskPage(
+    "Подключения",
+    "Телефония · мессенджеры · CRM · доставка результатов",
+    `${connectionsSegmentsHtml(segment, { returnTo })}${banner}<div class="conn-segment-body">${body}</div>`,
+    { id: "sec-connections", className: "connections-hub", testId: "connections-page" }
+  );
 }
 
 function pageCampaignList() {
@@ -2449,7 +2550,7 @@ function pageCampaignList() {
         <div class="empty-state empty-state-hero desk-empty-hero">
           <div class="empty-state-mark" aria-hidden="true"></div>
           <h3 class="empty-state-title">Пока нет кампаний</h3>
-          <p class="empty-state-lead">Создайте первую кампанию: задайте цель, загрузите контакты и запустите обзвон. Всё займёт меньше часа.</p>
+          <p class="empty-state-lead">Создайте первую.</p>
           ${createBtn}
         </div>
       </div>`,
@@ -2500,13 +2601,12 @@ function pageCampaignList() {
     <div class="desk-page-body">
       ${statRow}
       ${telephonyOnboardingBlock()}
-      ${deskSurface(
-        `<table class="data data-camps camp-table-desk">
+      <div class="desk-table-surface camp-table-wrap">
+        <table class="data data-camps camp-table-desk">
         <thead><tr><th>Название</th><th>Статус</th><th>Следующий шаг</th><th>Прогресс</th><th>Цель</th></tr></thead>
         <tbody>${rows}</tbody>
-      </table>`,
-        { className: "desk-table-surface camp-table-wrap" }
-      )}
+      </table>
+      </div>
       <div class="camp-cards-mobile">${cards}</div>
     </div>
   </section>`;
@@ -2539,33 +2639,47 @@ function pageCampaignNew() {
   );
 }
 
-function pageAccount() {
+function accountSegmentsHtml(active = "profile") {
+  return `<nav class="desk-segments" aria-label="Разделы настроек">
+    ${ACCOUNT_SEGMENTS.map(
+      (s) =>
+        `<a href="#/cabinet/account/${s.id}" class="desk-segment${s.id === active ? " is-active" : ""}"${s.id === active ? ' aria-current="page"' : ""}>${escapeHtml(s.label)}</a>`
+    ).join("")}
+  </nav>`;
+}
+
+function pageAccount(segment = "profile") {
   const who = state.impersonate
     ? `Кабинет «${escapeHtml(state.impersonate.name || "")}» (суперадмин)`
     : "Кабинет компании";
   const lockedNote =
     state.companyLocked && !state.impersonate
-      ? `<div class="banner banner-danger desk-banner"><strong>Аккаунт заблокирован</strong>
+      ? `<div class="banner banner-danger desk-banner banner-enter"><strong>Аккаунт заблокирован</strong>
          <p class="hint">Можно смотреть, менять и запускать нельзя. Напишите в поддержку Scorix.</p></div>`
       : "";
-  const body = `${lockedNote}
-    <div class="desk-link-cards account-links">
-      <a class="desk-link-card" href="#/cabinet/tariffs">
-        <span class="desk-link-kicker">Тарифы</span>
-        <strong class="desk-link-title">Баланс и тариф</strong>
-        <span class="hint">${hasApi() && !state.ui.cabinetMeLoaded ? "Загружаем…" : `${escapeHtml(state.companyBalance == null ? "—" : String(state.companyBalance))} ₽ · ${escapeHtml(state.companyTariff == null || state.companyTariff <= 0 ? "—" : String(state.companyTariff))} ₽/мин`}</span>
-      </a>
-      <a class="desk-link-card" href="#/cabinet/integrations">
-        <span class="desk-link-kicker">Интеграции</span>
-        <strong class="desk-link-title">Телефония</strong>
-        <span class="hint">${escapeHtml(telephonyStatusLine())}</span>
-      </a>
-    </div>
-    <div class="desk-section-block account-meta">
-      <p class="hint"><strong>Кто вошёл:</strong> ${who}</p>
+  let panel = "";
+  if (segment === "tariffs") {
+    panel = pageTariffsBody();
+  } else if (segment === "security") {
+    panel = `<div class="desk-section-block" id="sec-security">
+      <h2 class="section-title-bar">Безопасность</h2>
+      <p class="hint">Сессия в кабинете. Для смены пароля напишите в поддержку Scorix.</p>
       <p class="hint"><strong>Доступ:</strong> ${state.companyLocked && !state.impersonate ? "Ограничен (только просмотр)" : "Активен"}</p>
     </div>`;
-  return deskPage("Настройки", "Биллинг, телефония и доступ", body, { id: "sec-account" });
+  } else {
+    panel = `${lockedNote}
+    <div class="desk-section-block" id="sec-account-profile">
+      <h2 class="section-title-bar">Аккаунт</h2>
+      <p class="hint"><strong>Кто вошёл:</strong> ${who}</p>
+      <p class="hint"><strong>Доступ:</strong> ${state.companyLocked && !state.impersonate ? "Ограничен (только просмотр)" : "Активен"}</p>
+      <p class="hint">Телефония: ${escapeHtml(telephonyStatusLine())} · <a class="desk-inline-link" href="#/cabinet/connections/telephony">Открыть подключения</a></p>
+    </div>`;
+  }
+  return deskPage("Настройки", "Аккаунт, безопасность и тарифы", `${accountSegmentsHtml(segment)}${panel}`, {
+    id: "sec-account",
+    className: "account-hub",
+    testId: "account-page",
+  });
 }
 
 const TARIFF_PACKAGES = [
@@ -2576,13 +2690,9 @@ const TARIFF_PACKAGES = [
   { package_id: "pkg_25000", minutes: 25000, price: 4, amount: 100000 },
 ];
 
-function pageTariffs() {
+function pageTariffsBody() {
   if (hasApi() && !state.ui.cabinetMeLoaded) {
-    return deskPage("Тарифы", "Баланс, тариф и пакеты минут", `<p class="hint">Загружаем баланс…</p>`, {
-      id: "sec-tariffs",
-      className: "tariffs-page",
-      testId: "tariffs-page",
-    });
+    return `<div class="tariffs-page" id="sec-tariffs" data-testid="tariffs-page"><p class="hint">Загружаем баланс…</p></div>`;
   }
   const bal = state.companyBalance != null ? Number(state.companyBalance) : null;
   const tariff = state.companyTariff != null && Number(state.companyTariff) > 0 ? Number(state.companyTariff) : null;
@@ -2595,7 +2705,7 @@ function pageTariffs() {
       const buyBtn = topupOn
         ? `<button class="btn secondary btn-compact" type="button" data-buy-package="${escapeHtml(p.package_id)}" ${state.billingUi.checkoutBusy ? "disabled" : ""}>Купить пакет</button>`
         : "";
-      return `<tr class="${current ? "tariff-row-current" : ""}">
+      return `<tr class="desk-row${current ? " tariff-row-current" : ""}">
       <td>${escapeHtml(String(p.minutes.toLocaleString("ru-RU")))} мин${current ? ' <span class="status-badge status-badge--ok status-badge--compact">Текущий</span>' : ""}</td>
       <td>${escapeHtml(String(p.price))} ₽/мин</td>
       <td>${escapeHtml(String(p.amount.toLocaleString("ru-RU")))} ₽</td>
@@ -2605,12 +2715,14 @@ function pageTariffs() {
     .join("");
   const topupBlock = topupOn
     ? `<p class="hint">Выберите пакет и перейдите к оплате.${state.billingUi.checkoutBusy ? " Переходим к оплате…" : ""}</p>`
-    : `<div class="billing-cta panel">
+    : `<div class="billing-cta">
       <h3 class="desk-block-title">Пополнение баланса</h3>
       <p class="hint">Пополнение через поддержку Scorix</p>
       <a class="btn" href="mailto:support@scorix.ru?subject=Пополнение%20баланса">Связаться для пополнения</a>
     </div>`;
-  const body = `<div class="desk-stat-row desk-stat-row-3">
+  return `<div class="tariffs-page" id="sec-tariffs" data-testid="tariffs-page">
+    <h2 class="section-title-bar">Тарифы</h2>
+    <div class="desk-stat-row desk-stat-row-3">
       ${deskStatCard("Баланс", bal != null ? `${escapeHtml(String(bal))} ₽` : "—")}
       ${deskStatCard(
         "Тариф",
@@ -2635,9 +2747,13 @@ function pageTariffs() {
       )}
       <p class="hint">Считаем минуты состоявшегося разговора. Недозвон не тарифицируем.</p>
       ${topupBlock}
-    </div>`;
-  return deskPage("Тарифы", "Баланс, тариф и пакеты минут", body, {
-    id: "sec-tariffs",
+    </div>
+  </div>`;
+}
+
+function pageTariffs() {
+  return deskPage("Тарифы", "Баланс, тариф и пакеты минут", pageTariffsBody(), {
+    id: "sec-tariffs-legacy",
     className: "tariffs-page",
     testId: "tariffs-page",
   });
@@ -2682,9 +2798,24 @@ function packageMinutes(packageId) {
   return pkg?.minutes ?? null;
 }
 
-function pageAnalytics() {
+function pageAnalytics(segment = "summary") {
   const camp = activeCampaign();
   const hasAnyCalls = state.campaigns.some(hasCampaignCalls);
+  const segNav = `<nav class="desk-segments" aria-label="Разделы отчётов">
+    ${REPORTS_SEGMENTS.map(
+      (s) =>
+        `<a href="${s.id === "usage" ? "#/cabinet/analytics?seg=usage" : "#/cabinet/analytics"}" class="desk-segment${s.id === segment ? " is-active" : ""}"${s.id === segment ? ' aria-current="page"' : ""}>${escapeHtml(s.label)}</a>`
+    ).join("")}
+  </nav>`;
+
+  if (segment === "usage") {
+    return deskPage(
+      "Отчёты",
+      "Сводка и использование",
+      `${segNav}${pageUsage({ usage: state.omni.usage })}`,
+      { id: "sec-analytics", className: "reports-hub", testId: "reports-page" }
+    );
+  }
 
   const listMetrics = state.campaigns.length
     ? deskSurface(
@@ -2710,7 +2841,7 @@ function pageAnalytics() {
                     : c.ever_started
                       ? "Была"
                       : "—";
-              return `<tr>
+              return `<tr class="desk-row">
               <td><a href="#/cabinet/campaigns/${encodeURIComponent(c.id)}">${escapeHtml(c.name || "Без названия")}</a></td>
               <td>${statusBadgeHtml(c, { compact: true })}</td>
               <td>${escapeHtml(progress)}</td>
@@ -2729,7 +2860,7 @@ function pageAnalytics() {
     ? blockCampaignAnalytics(camp)
     : `<div class="analytics-empty"><p class="analytics-empty-title">Выберите кампанию</p><p class="hint">Откройте кампанию в разделе «Кампании»</p></div>`;
 
-  const body = `<div class="desk-section-block">
+  const body = `${segNav}<div class="desk-section-block">
       <h3 class="desk-block-title">${camp ? escapeHtml(camp.name || "Без названия") : "Выбранная кампания"}</h3>
       <p class="hint desk-block-lead">${hasAnyCalls ? "Ключевые метрики активной кампании" : "Метрики появятся после первого звонка"}</p>
       <div class="metrics-band analytics-page-metrics">${campBlock}</div>
@@ -2739,7 +2870,7 @@ function pageAnalytics() {
       ${listMetrics}
     </div>`;
 
-  return deskPage("Аналитика", "Конверсия, стоимость и выгрузка по кампаниям", body, { id: "sec-analytics" });
+  return deskPage("Отчёты", "Сводка и использование", body, { id: "sec-analytics", className: "reports-hub", testId: "reports-page" });
 }
 
 function analyticsMetric(label, value, hint = "") {
@@ -2840,9 +2971,9 @@ function reasonLinkHtml(reason, { asButton = true } = {}) {
   const hint = reason.hint ? `<span class="hint ready-reason-hint">${escapeHtml(reason.hint)}</span>` : "";
   let core;
   if (jump === "integrations") {
-    core = `<a class="ready-reason" href="#/cabinet/integrations">${text}</a>`;
+    core = `<a class="ready-reason" href="#/cabinet/connections/telephony">${text}</a>`;
   } else if (jump === "account") {
-    core = `<a class="ready-reason" href="#/cabinet/tariffs">${text}</a>`;
+    core = `<a class="ready-reason" href="#/cabinet/account/tariffs">${text}</a>`;
   } else if (jump) {
     core = asButton
       ? `<button type="button" class="ready-reason" data-jump="${escapeHtml(jump)}">${text}</button>`
@@ -2857,10 +2988,10 @@ function reasonCtaHtml(reason) {
   const jump = reasonJumpTarget(reason);
   const text = escapeHtml(reason.cta || reason.text);
   if (jump === "integrations") {
-    return `<a class="btn secondary ready-cta-btn" href="#/cabinet/integrations">${text}</a>`;
+    return `<a class="btn secondary ready-cta-btn" href="#/cabinet/connections/telephony">${text}</a>`;
   }
   if (jump === "account" || reason.money) {
-    return `<a class="btn secondary ready-cta-btn" href="#/cabinet/tariffs">${text}</a>`;
+    return `<a class="btn secondary ready-cta-btn" href="#/cabinet/account/tariffs">${text}</a>`;
   }
   if (jump) {
     return `<button type="button" class="btn secondary ready-cta-btn" data-jump="${escapeHtml(jump)}">${text}</button>`;
@@ -2926,7 +3057,7 @@ function readinessStripHtml(camp) {
   }
 
   return `<div class="ready-strip" id="sec-ops">
-    <a class="ready-cell${telOk ? " ready-cell-ok" : " ready-cell-warn"}" href="#/cabinet/integrations" id="sec-telephony-summary">
+    <a class="ready-cell${telOk ? " ready-cell-ok" : " ready-cell-warn"}" href="#/cabinet/connections/telephony" id="sec-telephony-summary">
       <span class="ready-kicker-row"><span class="ready-kicker">Телефония</span><span class="ready-dot${telOk ? " ready-dot-ok" : " ready-dot-warn"}" aria-hidden="true"></span></span>
       <span class="ready-cell-value">${escapeHtml(telLabel)}</span>
       <span class="ready-cell-action">${telOk ? "Изменить" : "Настроить"}</span>
@@ -3035,7 +3166,7 @@ function deskPage(title, lead, bodyHtml, { id = "", backHref = "", backLabel = "
   return `<section class="desk-page${className ? ` ${escapeHtml(className)}` : ""}"${id ? ` id="${escapeHtml(id)}"` : ""}${testAttr}>
     ${backHref ? `<a class="back-link quiet" href="${escapeHtml(backHref)}">${escapeHtml(backLabel)}</a>` : ""}
     <header class="desk-page-head">
-      <h2 class="desk-page-title">${escapeHtml(title)}</h2>
+      <h1 class="desk-page-title">${escapeHtml(title)}</h1>
       ${lead ? `<p class="hint desk-page-lead">${escapeHtml(lead)}</p>` : ""}
     </header>
     <div class="desk-page-body">${bodyHtml}</div>
@@ -3047,7 +3178,7 @@ function deskPageHeadRow(title, lead, actionsHtml, { id = "", testId = "" } = {}
   return `<section class="desk-page campaigns-list-page"${id ? ` id="${escapeHtml(id)}"` : ""}${testAttr}>
     <header class="desk-page-head desk-page-head-row">
       <div class="desk-page-head-copy">
-        <h2 class="desk-page-title">${escapeHtml(title)}</h2>
+        <h1 class="desk-page-title">${escapeHtml(title)}</h1>
         ${lead ? `<p class="hint desk-page-lead">${escapeHtml(lead)}</p>` : ""}
       </div>
       <div class="desk-page-actions">${actionsHtml}</div>
@@ -3273,7 +3404,7 @@ function blockBusinessOutcomes(camp) {
       <thead><tr><th>Итог</th><th>Кол-во</th><th>Доля</th><th>Изменение</th><th>Действие</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
-    <p class="hint">Webhook и CRM — в меню компании, не внутри итогов кампании.</p>
+    <p class="hint">Доставка результатов настраивается в «Подключениях» → «Доставка».</p>
   </section>`;
 }
 
@@ -3293,50 +3424,49 @@ function onboardingStepHtml(num, title, hint, body, { locked: stepLocked = false
 }
 
 function workspaceOverviewTab(camp, weak, started) {
-  const { completed, total } = readinessProgress(camp);
-  const goalDone = goalIsFilled(camp);
-  const contactsDone = Boolean(camp.contacts?.length);
-  const telDone = state.telephony.status === "ok" && scheduleIsSet(camp);
-  const step3Locked = !contactsDone;
-  const step4Locked = !telDone;
+  const { completed, total, items } = readinessProgress(camp);
+  const next = (items || []).find((item) => !item.ok);
 
-  const step1Simple = onboardingStepHtml(
-    1,
-    "Цель и контекст",
-    "Опишите, зачем звоним",
-    `<p class="hint">${escapeHtml(camp.goal || "Цель ещё не задана")}</p>
-     <button class="btn secondary" type="button" data-workspace-tab="scenario">${goalDone ? "Изменить" : "Заполнить"}</button>`,
-    { done: goalDone }
-  );
-  const step2 = onboardingStepHtml(
-    2,
-    "Контакты",
-    "Загрузите CSV или Excel",
-    `<p class="hint">${(camp.contacts || []).length ? `${camp.contacts.length} контактов загружено` : "Файл ещё не загружен"}</p>
-     <button class="btn secondary" type="button" data-workspace-tab="contacts">${contactsDone ? "Открыть" : "Загрузить"}</button>`,
-    { locked: !goalDone, done: contactsDone }
-  );
-  const step3 = onboardingStepHtml(
-    3,
-    "Телефония и время звонков",
-    "Подключите SIP и задайте окно обзвона",
-    `${blockCallRules(camp)}`,
-    { locked: step3Locked, done: telDone }
-  );
-  const step4 = onboardingStepHtml(
-    4,
-    "Проверка и запуск",
-    "Проверьте сценарий и запустите",
-    `${blockTestingSection(camp)}`,
-    { locked: step4Locked, done: completed === total }
-  );
+  let nextCta = `<button class="btn" type="button" data-workspace-tab="progress">К ходу обзвона</button>`;
+  if (next) {
+    const label = escapeHtml(next.action || "Продолжить");
+    if (next.jump === "integrations") {
+      nextCta = `<a class="btn" href="#/cabinet/connections/telephony">${label}</a>`;
+    } else if (next.jump === "tariffs") {
+      nextCta = `<a class="btn" href="#/cabinet/account/tariffs">${label}</a>`;
+    } else if (next.jump === "sec-schedule") {
+      nextCta = `<button class="btn" type="button" data-open-schedule="1">${label}</button>`;
+    } else if (next.jump === "sec-contacts" || next.id === "contacts") {
+      nextCta = `<button class="btn" type="button" data-workspace-tab="contacts">${label}</button>`;
+    } else if (next.id === "goal" || next.jump === "sec-context") {
+      nextCta = `<button class="btn" type="button" data-workspace-tab="scenario">${label}</button>`;
+    } else {
+      nextCta = `<button class="btn" type="button" data-workspace-tab="scenario">${label}</button>`;
+    }
+  }
 
-  return `<div class="workspace-tab-panel" data-tab="overview">
-    ${dialModeBannerHtml()}
-    ${speedPromiseBannerHtml()}
+  const nextCopy = next
+    ? `<h3 class="overview-next-title">${escapeHtml(next.action || next.label)}</h3>
+       <p class="overview-next-lead">${escapeHtml(next.label)}</p>`
+    : `<h3 class="overview-next-title">Готово к запуску</h3>
+       <p class="overview-next-lead">Все шаги закрыты. Можно запускать обзвон из шапки.</p>`;
+
+  return `<div class="workspace-tab-panel overview-focus" data-tab="overview">
+    <div class="overview-next banner-enter">
+      <div>${nextCopy}</div>
+      ${nextCta}
+    </div>
     ${launchChecklistHtml(camp)}
-    <div class="onboard-steps">${step1Simple}${step2}${step3}${step4}</div>
-    ${blockCallProgress(camp)}
+    <section class="workspace-campaign-settings" id="sec-campaign-settings">
+      <h2 class="section-title-bar">Настройки кампании</h2>
+      <p class="hint">Расписание, линии и очистка — здесь. Сценарий и контакты на своих вкладках.</p>
+      <div class="settings-links row-actions">
+        <button class="btn secondary" type="button" data-open-schedule="1">Расписание</button>
+        <a class="btn secondary" href="#/cabinet/connections/telephony">Подключения</a>
+        <a class="btn secondary" href="#/cabinet/account/tariffs">Тарифы</a>
+      </div>
+      ${blockCampaignPurge(camp)}
+    </section>
   </div>`;
 }
 
@@ -3362,44 +3492,69 @@ function speedPromiseBannerHtml() {
 function campaignWorkspace(camp) {
   const started = isStarted(camp);
   const weak = isWeakScenario(camp);
-  const tab = state.ui.workspaceTab || "overview";
+  let tab = state.ui.workspaceTab || "overview";
+  if (WORKSPACE_TAB_ALIASES[tab]) {
+    const alias = WORKSPACE_TAB_ALIASES[tab];
+    if (tab === "chat") state.ui.resultsSub = "chat";
+    tab = alias;
+    state.ui.workspaceTab = tab;
+  }
   const { completed, total } = readinessProgress(camp);
+  const returnPath = `/cabinet/campaigns/${camp.id}`;
+  const providers = state.omni.messengers?.providers || [];
+  const messengerOptions = providers
+    .filter((p) => p.connected)
+    .map((p) => ({ id: p.kind || p.id, label: p.label || p.kind || "Мессенджер" }));
 
   let tabContent = "";
   if (tab === "overview") tabContent = workspaceOverviewTab(camp, weak, started);
   else if (tab === "channels") {
     const ch = state.omni.channelsByCampaign[camp.id] || {};
-    tabContent = blockChannels({
-      connected: {
-        voice_outbound: true,
-        voice_inbound: true,
-        messenger: Boolean(ch.messenger_connected || state.omni.messengers?.providers?.some((p) => p.connected)),
-        voice_outbound_on: ch.voice_outbound,
-        voice_inbound_on: ch.voice_inbound,
-        messenger_on: ch.messenger,
-      },
-      locked: started || ch.channels_locked,
-      policy: ch.omnichannel_policy || "off",
-      mergeAccepted: ch.merge_accepted,
-    }) + campaignKnowledgeBlock(state.omni.campaignKnowledge);
-  }
-  else if (tab === "inbound") tabContent = `<div class="workspace-tab-panel" data-tab="inbound">${pageInboundLine({ line: state.omni.inboundByCampaign[camp.id], report: state.omni.inboundReport, campaignSync: true })}</div>`;
-  else if (tab === "chat") tabContent = pageChatReport({ rows: state.omni.chatReport || [] });
-  else if (tab === "contacts") tabContent = `<div class="workspace-tab-panel" data-tab="contacts">${blockNumbers(camp)}</div>`;
+    const inboundHtml = pageInboundLine({
+      line: state.omni.inboundByCampaign[camp.id],
+      report: state.omni.inboundReport,
+      campaignSync: true,
+      embedded: true,
+    });
+    tabContent =
+      blockChannels({
+        connected: {
+          voice_outbound: true,
+          voice_inbound: true,
+          messenger: Boolean(ch.messenger_connected || providers.some((p) => p.connected)),
+          voice_outbound_on: ch.voice_outbound,
+          voice_inbound_on: ch.voice_inbound,
+          messenger_on: ch.messenger,
+        },
+        locked: started || ch.channels_locked,
+        policy: ch.omnichannel_policy || "off",
+        mergeAccepted: ch.merge_accepted,
+        messengerOptions,
+        selectedMessenger: ch.messenger_kind || "",
+        returnPath,
+        inboundHtml,
+      }) + campaignKnowledgeBlock(state.omni.campaignKnowledge);
+  } else if (tab === "contacts") tabContent = `<div class="workspace-tab-panel" data-tab="contacts">${blockNumbers(camp)}</div>`;
   else if (tab === "scenario") tabContent = `<div class="workspace-tab-panel" data-tab="scenario">${blockScenarioFlow(camp, weak, started)}</div>`;
-  else if (tab === "calls")
-    tabContent = `<div class="workspace-tab-panel" data-tab="calls">${dialModeBannerHtml()}${blockCallProgress(camp)}${blockCallQuality(camp)}</div>`;
-  else if (tab === "results")
-    tabContent = `<div class="workspace-tab-panel" data-tab="results">${hasCampaignCalls(camp) ? blockBusinessOutcomes(camp) + blockCampaignAnalytics(camp) : `<div class="results-placeholder panel"><p class="hint results-placeholder-title">После первого звонка здесь появятся итоги и метрики</p>${blockBusinessOutcomes(camp)}</div>`}</div>`;
-  else if (tab === "settings")
-    tabContent = `<div class="workspace-tab-panel" data-tab="settings">
-      ${blockCallRules(camp)}
-      <div class="settings-links row-actions">
-        <a class="btn secondary" href="#/cabinet/connections">Подключения</a>
-        <a class="btn secondary" href="#/cabinet/tariffs">Тарифы</a>
-      </div>
-      ${blockCampaignPurge(camp)}
+  else if (tab === "progress")
+    tabContent = `<div class="workspace-tab-panel" data-tab="progress">${dialModeBannerHtml()}${blockCallProgress(camp)}${blockCallQuality(camp)}</div>`;
+  else if (tab === "results") {
+    const sub = state.ui.resultsSub || "outcomes";
+    const subNav = `<nav class="desk-segments results-subnav" aria-label="Результаты">
+      <button type="button" class="desk-segment${sub === "outcomes" ? " is-active" : ""}" data-results-sub="outcomes">Итоги</button>
+      <button type="button" class="desk-segment${sub === "chat" ? " is-active" : ""}" data-results-sub="chat">Чат</button>
+    </nav>`;
+    const outcomes =
+      hasCampaignCalls(camp)
+        ? blockBusinessOutcomes(camp) + blockCampaignAnalytics(camp)
+        : `<div class="results-placeholder"><p class="hint results-placeholder-title">После первого звонка здесь появятся итоги и метрики</p>${blockBusinessOutcomes(camp)}</div>`;
+    const chat = pageChatReport({ rows: state.omni.chatReport || [] });
+    tabContent = `<div class="workspace-tab-panel" data-tab="results">
+      ${subNav}
+      ${sub === "chat" ? chat : outcomes}
+      ${deliveryStatusBlock({ hook: state.omni.webhook, journal: state.omni.journal })}
     </div>`;
+  } else tabContent = workspaceOverviewTab(camp, weak, started);
 
   const outcomesFold = hasCampaignCalls(camp)
     ? `<section class="outcomes-section outcomes-panel-desk" id="sec-analytics">
@@ -3423,6 +3578,7 @@ function campaignWorkspace(camp) {
             ${statusBadgeHtml(camp)}
           </div>
           <div class="workspace-toolbar">
+            <button type="button" class="btn ghost workspace-gear" data-workspace-settings aria-label="Настройки кампании" title="Настройки кампании">⚙</button>
             <span class="workspace-readiness" title="Готовность к запуску">${completed} из ${total}</span>
             ${runtimeModeBadgeHtml()}
             ${balanceChipHtml({ className: "balance-chip--workspace" })}
@@ -4120,7 +4276,7 @@ function mangoPartnerBlock() {
   </div>`;
 }
 
-function sectionTelephony() {
+function telephonySegmentBody() {
   const t = state.telephony;
   const linesVal = t.lines != null ? t.lines : "";
   const panel = state.ui.telephonyPanel;
@@ -4159,7 +4315,7 @@ function sectionTelephony() {
     statusActions = `<div class="tel-connect-grid">
         <button class="tel-connect-card" type="button" data-open-tel="sip" ${telActionAttr()}>
           <span class="tel-connect-kicker">SIP</span>
-          <strong class="tel-connect-title">Подключить SIP</strong>
+          <strong class="tel-connect-title">Подключить телефонию</strong>
           <span class="hint">Хост, логин и пароль вашей АТС</span>
         </button>
       </div>
@@ -4167,8 +4323,16 @@ function sectionTelephony() {
   }
 
   const expand = panel === "sip" ? sipFormInline() : "";
+  const noSipBanner =
+    !telOk && !t.checking
+      ? `<div class="banner banner-warn desk-banner banner-enter"><strong>Подключите телефонию, чтобы запускать обзвон.</strong></div>`
+      : "";
 
-  const body = `<div class="desk-stat-row desk-stat-row-1">
+  return `<div class="conn-segment" data-conn-seg="telephony" id="sec-telephony">
+    <h2 class="section-title-bar">Телефония</h2>
+    <p class="hint">Исходящий SIP. Входящая линия настраивается в кампании → Каналы.</p>
+    ${noSipBanner}
+    <div class="desk-stat-row desk-stat-row-1">
       ${deskStatCard(
         "Статус",
         escapeHtml(statusTitle),
@@ -4176,13 +4340,18 @@ function sectionTelephony() {
         { tone: telOk ? "ok" : telWarn ? "warn" : t.checking ? "" : "warn" }
       )}
     </div>
-    ${telWarn && !t.checking ? `<div class="banner banner-danger desk-banner"><strong>Не удалось подключить телефонию</strong><p class="hint">${escapeHtml(statusHint)}</p></div>` : ""}
+    ${telWarn && !t.checking ? `<div class="banner banner-danger desk-banner banner-enter"><strong>Не удалось подключить телефонию</strong><p class="hint">${escapeHtml(statusHint)}</p></div>` : ""}
     ${hasApi() ? dialModeBannerHtml() : `<div class="banner banner-warn desk-banner dial-mode-banner" data-testid="dial-mode-banner"><strong>Кабинет без сервера</strong><p class="hint">Сохранение и проверка SIP недоступны.</p></div>`}
     ${statusActions}
     ${t.checking ? "" : linesField(linesVal, { actionAttr: telActionAttr() })}
-    ${expand ? `<div class="tel-form-expand">${expand}</div>` : ""}`;
+    ${expand ? `<div class="tel-form-expand">${expand}</div>` : ""}
+  </div>`;
+}
 
-  return deskPage("Интеграции", "Телефония и число линий для обзвона", body, { id: "sec-telephony" });
+function sectionTelephony() {
+  return deskPage("Подключения", "Телефония и число линий для обзвона", telephonySegmentBody(), {
+    id: "sec-telephony-legacy",
+  });
 }
 
 function blockScenario(camp) {
@@ -4966,7 +5135,10 @@ async function parseContactsFile(file) {
 function loginView() {
   const apiHint = hasApi()
     ? `<p class="hint">В кабинет компании или в админку</p>`
-    : `<p class="hint">Сначала укажите адрес API — сейчас только проверка вёрстки</p>`;
+    : `<p class="hint">Локальный stub: любой логин и пароль — в кабинет</p>`;
+  const stubLink = isDevEnvironment()
+    ? `<p class="hint login-panel-footer"><a href="?stub=1#/cabinet/campaigns" data-testid="stub-preview-link">Открыть превью без API</a></p>`
+    : "";
   return `<div class="login-wrap login-wrap-center">
     <form class="login-panel" id="login-form" data-testid="login-panel">
       <p class="login-panel-brand"><span class="brand-mark" aria-hidden="true"></span>Scorix</p>
@@ -4984,6 +5156,7 @@ function loginView() {
       </div>
       <button class="btn login-submit" id="submit" type="submit">Войти</button>
       <div class="error" id="form-error" hidden></div>
+      ${stubLink}
       <p class="login-panel-footer hint"><a href="#/register" data-testid="register-link">Создать аккаунт</a></p>
       <p class="hint login-panel-muted">Зарегистрируйте компанию и подтвердите email</p>
       <p class="hint desktop-note">Удобнее на компьютере. Телефонную вёрстку сделаем позже</p>
@@ -5099,7 +5272,7 @@ function billingSuccessView() {
       <p class="hint"><strong>Баланс:</strong> ${escapeHtml(String(bal ?? "—"))} ₽</p>
       <div class="login-panel-actions">
         <a class="btn login-submit" href="#/cabinet/campaigns">К кампаниям</a>
-        <a class="btn secondary login-panel-secondary" href="#/cabinet/tariffs">К тарифам</a>
+        <a class="btn secondary login-panel-secondary" href="#/cabinet/account/tariffs">К тарифам</a>
       </div>
     </div>
   </div>`;
@@ -5135,7 +5308,7 @@ function billingErrorView(reason) {
       <p class="hint">${escapeHtml(copy.body)}</p>
       <div class="login-panel-actions">
         ${refreshBtn}
-        <a class="btn login-submit" href="#/cabinet/tariffs">К тарифам</a>
+        <a class="btn login-submit" href="#/cabinet/account/tariffs">К тарифам</a>
       </div>
     </div>
   </div>`;
@@ -5231,7 +5404,7 @@ function render() {
         .then(() => render())
         .catch((e) => flash(errorMessage(e?.code), "error"));
     }
-    if (hasApi() && cabinet.page === "integrations" && !state.ui.telephonyLoaded) {
+    if (hasApi() && cabinet.page === "connections" && (cabinet.segment === "telephony" || !cabinet.segment) && !state.ui.telephonyLoaded) {
       state.ui.telephonyLoaded = true;
       void refreshTelephony()
         .then(() => render())
@@ -5275,14 +5448,18 @@ function render() {
           flash(errorMessage(e?.code), "error");
         });
     }
-    if (hasApi() && (cabinet.page === "tariffs" || cabinet.page === "account" || cabinet.page === "workspace")) {
+    if (hasApi() && (cabinet.page === "account" || cabinet.page === "workspace")) {
       void refreshCabinetMe()
         .then(async () => {
-          if (cabinet.page === "tariffs") await refreshBillingPackages().catch(() => {});
-          if (cabinet.page === "tariffs" || cabinet.page === "account") render();
+          if (cabinet.page === "account" && cabinet.segment === "tariffs") {
+            await refreshBillingPackages().catch(() => {});
+          }
+          if (cabinet.page === "account") render();
         })
         .catch((e) => {
-          if (cabinet.page === "tariffs") flash(errorMessage(e?.code) || "Не удалось загрузить тарифы", "error");
+          if (cabinet.page === "account" && cabinet.segment === "tariffs") {
+            flash(errorMessage(e?.code) || "Не удалось загрузить тарифы", "error");
+          }
         });
     }
     if (
@@ -5447,10 +5624,30 @@ function bindWorkspaceTabs() {
   document.querySelectorAll("[data-workspace-tab]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.preventDefault();
-      const tab = btn.getAttribute("data-workspace-tab");
+      let tab = btn.getAttribute("data-workspace-tab");
       if (!tab) return;
+      if (WORKSPACE_TAB_ALIASES[tab]) {
+        if (tab === "chat") state.ui.resultsSub = "chat";
+        tab = WORKSPACE_TAB_ALIASES[tab];
+      }
       state.ui.workspaceTab = tab;
       render();
+    });
+  });
+  document.querySelectorAll("[data-results-sub]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.ui.resultsSub = btn.getAttribute("data-results-sub") || "outcomes";
+      state.ui.workspaceTab = "results";
+      render();
+    });
+  });
+  document.querySelectorAll("[data-workspace-settings]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.ui.workspaceTab = "overview";
+      render();
+      requestAnimationFrame(() => {
+        document.getElementById("sec-campaign-settings")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
     });
   });
   document.querySelectorAll("[data-open-schedule]").forEach((btn) => {
@@ -5500,11 +5697,15 @@ function bindJumpNav() {
         return;
       }
       if (id === "integrations") {
-        navigate("/cabinet/integrations");
+        navigate("/cabinet/connections/telephony");
         return;
       }
       if (id === "account") {
         navigate("/cabinet/account");
+        return;
+      }
+      if (id === "tariffs") {
+        navigate("/cabinet/account/tariffs");
         return;
       }
       if (id === "sec-schedule") {
@@ -5646,6 +5847,12 @@ function bindShell() {
   const logoutBtn = document.getElementById("logout");
   if (logoutBtn) {
     logoutBtn.onclick = () => {
+      void doLogout();
+    };
+  }
+  const logoutMobile = document.getElementById("logout-mobile");
+  if (logoutMobile) {
+    logoutMobile.onclick = () => {
       void doLogout();
     };
   }
@@ -7756,16 +7963,11 @@ async function checkInboundSipHealth() {
 async function hydrateOmni(cabinet) {
   if (!hasApi() || !state.session) return;
   const page = cabinet?.page;
-  if (page === "usage" && !state.omni.loaded.usage) {
+  const segment = cabinet?.segment;
+
+  if (page === "analytics" && (segment === "usage" || state.ui.reportsSegment === "usage") && !state.omni.loaded.usage) {
     state.omni.usage = await fetchOmniUsage(state.session);
     state.omni.loaded.usage = true;
-    render();
-    return;
-  }
-  if (page === "webhook" && !state.omni.loaded.webhook) {
-    state.omni.webhook = await fetchOmniWebhook(state.session);
-    state.omni.journal = (await fetchOmniWebhookJournal(state.session).catch(() => ({ items: [] }))).items || [];
-    state.omni.loaded.webhook = true;
     render();
     return;
   }
@@ -7775,39 +7977,58 @@ async function hydrateOmni(cabinet) {
     render();
     return;
   }
-  if (page === "crm" && !state.omni.loaded.crm) {
-    state.omni.crm = await fetchOmniCrm(state.session);
-    state.omni.loaded.crm = true;
-    render();
-    return;
-  }
-  if (page === "dialogs" && !state.omni.loaded.dialogs) {
-    const data = await fetchOmniDialogs(state.session);
-    state.omni.dialogs = data.items || [];
-    state.omni.loaded.dialogs = true;
-    render();
-    return;
-  }
-  if ((page === "connections" || page === "integrations") && !state.omni.loaded.messengers) {
-    state.omni.messengers = await fetchOmniMessengers(state.session).catch(() => ({ providers: [] }));
-    state.omni.loaded.messengers = true;
-    state.omni.inboundSipDead = await checkInboundSipHealth();
-    render();
-    return;
+  if (page === "connections") {
+    const seg = segment || "telephony";
+    if (seg === "messengers" && !state.omni.loaded.messengers) {
+      state.omni.messengers = await fetchOmniMessengers(state.session).catch(() => ({ providers: [] }));
+      state.omni.loaded.messengers = true;
+      state.omni.inboundSipDead = await checkInboundSipHealth();
+      render();
+      return;
+    }
+    if (seg === "crm" && !state.omni.loaded.crm) {
+      state.omni.crm = await fetchOmniCrm(state.session);
+      state.omni.loaded.crm = true;
+      render();
+      return;
+    }
+    if (seg === "delivery" && !state.omni.loaded.webhook) {
+      state.omni.webhook = await fetchOmniWebhook(state.session);
+      state.omni.journal = (await fetchOmniWebhookJournal(state.session).catch(() => ({ items: [] }))).items || [];
+      state.omni.loaded.webhook = true;
+      render();
+      return;
+    }
+    if (seg === "telephony" && !state.omni.loaded.messengers) {
+      state.omni.messengers = await fetchOmniMessengers(state.session).catch(() => ({ providers: [] }));
+      state.omni.loaded.messengers = true;
+      state.omni.inboundSipDead = await checkInboundSipHealth();
+      render();
+      return;
+    }
   }
   if (page === "workspace" && cabinet.id) {
-    const key = `ws:${cabinet.id}:${state.ui.workspaceTab}`;
+    const key = `ws:${cabinet.id}:${state.ui.workspaceTab}:${state.ui.resultsSub || ""}`;
     if (state.omni.loaded[key]) return;
     if (state.ui.workspaceTab === "channels") {
       state.omni.channelsByCampaign[cabinet.id] = await fetchOmniChannels(cabinet.id, state.session).catch(() => ({}));
       state.omni.campaignKnowledge = await fetchOmniKnowledge(state.session, cabinet.id).catch(() => null);
-    }
-    if (state.ui.workspaceTab === "inbound") {
       state.omni.inboundByCampaign[cabinet.id] = await fetchOmniInbound(cabinet.id, state.session).catch(() => null);
       state.omni.inboundReport = (await fetchOmniInboundReport(state.session).catch(() => ({ items: [] }))).items || [];
+      if (!state.omni.loaded.messengers) {
+        state.omni.messengers = await fetchOmniMessengers(state.session).catch(() => ({ providers: [] }));
+        state.omni.loaded.messengers = true;
+      }
     }
-    if (state.ui.workspaceTab === "chat") {
-      state.omni.chatReport = (await fetchOmniChatReport(state.session).catch(() => ({ items: [] }))).items || [];
+    if (state.ui.workspaceTab === "results") {
+      if (state.ui.resultsSub === "chat") {
+        state.omni.chatReport = (await fetchOmniChatReport(state.session).catch(() => ({ items: [] }))).items || [];
+      }
+      if (!state.omni.loaded.webhook) {
+        state.omni.webhook = await fetchOmniWebhook(state.session).catch(() => null);
+        state.omni.journal = (await fetchOmniWebhookJournal(state.session).catch(() => ({ items: [] }))).items || [];
+        state.omni.loaded.webhook = true;
+      }
     }
     state.omni.loaded[key] = true;
     render();
@@ -9024,6 +9245,124 @@ function bindAnalytics() {
   };
 }
 
+function stubPreviewCampaign() {
+  return {
+    id: "camp-preview-1",
+    name: "Демо-кампания",
+    goal: "Показать кабинет без API",
+    details: "Локальный stub для просмотра UI кабинета Scorix",
+    dial_state: "draft",
+    preview: {
+      greeting: "Здравствуйте, это Scorix",
+      says: "Коротко покажем кабинет без живого API",
+      replies: "Отвечает на вопросы по демо",
+      tone: "спокойный",
+    },
+    contacts: [
+      { id: "ct-1", phone: "+79001110001", name: "Алексей", status: "в_процессе" },
+      { id: "ct-2", phone: "+79001110002", name: "Мария", status: "завершённые_темы" },
+      { id: "ct-3", phone: "+79001110003", name: "Игорь", status: "недозвон" },
+    ],
+    schedule: {
+      days: ["mon", "tue", "wed", "thu", "fri"],
+      from: "10:00",
+      to: "18:00",
+      tz: "Europe/Moscow",
+    },
+    retries: 2,
+  };
+}
+
+/** Seed local campaigns/balance for offline preview (idempotent). */
+function ensureStubCabinetData() {
+  const existing = loadJson("scx_campaigns", []);
+  if (!Array.isArray(existing) || existing.length === 0) {
+    const camp = stubPreviewCampaign();
+    saveJson("scx_campaigns", [camp]);
+    localStorage.setItem("scx_active_campaign", camp.id);
+  }
+  if (localStorage.getItem("scx_co_balance") == null) localStorage.setItem("scx_co_balance", "500");
+  if (localStorage.getItem("scx_co_tariff") == null) localStorage.setItem("scx_co_tariff", "5");
+  applyStubOmniState();
+}
+
+function stubDeliveryMode() {
+  try {
+    const search = new URLSearchParams(location.search || "");
+    const hashQ = String(location.hash || "").split("?")[1] || "";
+    const hashParams = new URLSearchParams(hashQ);
+    return search.get("delivery") || hashParams.get("delivery") || localStorage.getItem("scx_stub_delivery") || "empty";
+  } catch {
+    return "empty";
+  }
+}
+
+function applyStubOmniState() {
+  if (hasApi()) return;
+  const mode = stubDeliveryMode();
+  try {
+    localStorage.setItem("scx_stub_delivery", mode);
+  } catch {
+    /* private mode */
+  }
+  if (mode === "ok") {
+    state.omni.webhook = { url: "https://hooks.example.com/scorix", active: true, has_secret: true };
+    state.omni.journal = [
+      { time: "14:02", event: "outbound.member.completed_topics", http_status: 200, attempt: 1, status: "ok" },
+      { time: "14:05", event: "outbound.member.no_answer", http_status: 200, attempt: 1, status: "ok" },
+    ];
+  } else if (mode === "fail") {
+    state.omni.webhook = { url: "https://hooks.example.com/scorix", active: true, has_secret: true };
+    state.omni.journal = [
+      { time: "14:02", event: "outbound.member.completed_topics", http_status: 500, attempt: 3, status: "failed" },
+      { time: "14:05", event: "outbound.member.no_answer", http_status: 502, attempt: 3, status: "exhausted" },
+    ];
+  } else {
+    state.omni.webhook = null;
+    state.omni.journal = [];
+  }
+  state.omni.messengers = {
+    providers: [
+      { kind: "telegram", label: "Telegram", connected: false },
+      { kind: "vk", label: "VK", connected: false },
+    ],
+  };
+  state.omni.loaded.webhook = true;
+  state.omni.loaded.messengers = true;
+}
+
+/** Switch SPA to offline stub mid-session (after unreachable API on localhost). */
+function activateForceStub() {
+  if (typeof window !== "undefined") window.SCORIX_FORCE_STUB = true;
+  ensureStubCabinetData();
+  state.campaigns = loadJson("scx_campaigns", []);
+  state.companyBalance = Number(localStorage.getItem("scx_co_balance") || "500");
+  state.companyTariff = Number(localStorage.getItem("scx_co_tariff") || "5");
+  state.activeCampaignId = localStorage.getItem("scx_active_campaign") || state.campaigns[0]?.id || "";
+  state.ui.campaignsLoaded = true;
+  state.ui.campaignsLoading = false;
+  state.ui.cabinetMeLoaded = true;
+  state.ui.apiReachable = false;
+  applyStubOmniState();
+}
+
+/**
+ * Local stub auth (README): any non-empty login/password → cabinet;
+ * locked/* → locked banner; admin/admin → admin.
+ * Returns destination hash path.
+ */
+function applyLocalStubLogin(loginName, password) {
+  activateForceStub();
+  const isAdmin = loginName === "admin" && password === "admin";
+  const lockedUser = String(loginName).toLowerCase() === "locked";
+  applySessionPayload({
+    session: "local-stub-session",
+    role: isAdmin ? "superadmin" : "company",
+    company_locked: lockedUser,
+  });
+  return isAdmin ? "/admin" : "/cabinet/campaigns";
+}
+
 function applySessionPayload(data) {
   state.session = data.session || state.session;
   state.role = data.role || "";
@@ -9118,7 +9457,23 @@ function bindLogin() {
     submit.textContent = "Входим…";
     submit.disabled = true;
     try {
-      const data = await apiLogin(loginName, password);
+      if (!hasApi()) {
+        navigate(applyLocalStubLogin(loginName, password));
+        return;
+      }
+      const loginPromise = apiLogin(loginName, password);
+      const data = isDevEnvironment()
+        ? await Promise.race([
+            loginPromise,
+            new Promise((_, reject) => {
+              setTimeout(() => {
+                const err = new Error("request_failed");
+                err.code = "request_failed";
+                reject(err);
+              }, 4000);
+            }),
+          ])
+        : await loginPromise;
       if (data.totp_required && data.pending_token) {
         state.pendingTotp = { token: data.pending_token, role: data.role || "superadmin" };
         navigate("/login/totp");
@@ -9131,6 +9486,12 @@ function bindLogin() {
       if (e?.code === "email_not_verified") {
         writePendingEmail(loginName);
         navigate("/check-email");
+        return;
+      }
+      const networkish =
+        e?.code === "request_failed" || e?.code === "server" || e?.code === "api_not_configured";
+      if (isDevEnvironment() && networkish) {
+        navigate(applyLocalStubLogin(loginName, password));
         return;
       }
       document.getElementById("password").value = "";
@@ -9199,4 +9560,7 @@ function escapeHtml(s) {
 
 window.addEventListener("hashchange", render);
 normalizeExternalReturnPath();
+if (!hasApi()) {
+  ensureStubCabinetData();
+}
 restoreSession().finally(() => render());

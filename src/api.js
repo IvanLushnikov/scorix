@@ -92,6 +92,7 @@ export const ERROR_MESSAGES = {
 };
 
 export function hasApi() {
+  if (typeof window !== "undefined" && window.SCORIX_FORCE_STUB) return false;
   return Boolean(API_BASE);
 }
 

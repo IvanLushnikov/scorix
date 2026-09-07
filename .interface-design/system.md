@@ -36,18 +36,18 @@ Use `gap` with flex/grid. No 10px, 14px, 20px unless handoff explicitly allows.
 
 | Token | Role |
 |---|---|
-| `--bg0` `#eef1f6` | page atmosphere |
-| `--bg1` `#f7f8fb` | soft zones |
-| `--surface` `#ffffff` | primary panel |
-| `--surface-2` `#f4f6f9` | nested field/table — **no shadow** |
-| `--ink` `#101828` | primary text |
-| `--muted` `#667085` | secondary |
-| `--line` `rgba(16,24,40,0.08)` | dividers |
-| `--accent` `#2557ff` | CTA / focus |
+| `--bg0` `#eef1f6` | cold paper atmosphere around the desk |
+| `--bg1` `#e4eaf3` | rail / soft zones |
+| `--surface` `#ffffff` | one white content plane |
+| `--surface-2` `#f3f6fb` | nested field/table — **no shadow** |
+| `--ink` `#0b1220` | primary text |
+| `--muted` `#5b6b82` | secondary |
+| `--line` `rgba(11,18,32,0.1)` | dividers |
+| `--accent` `#2557ff` | CTA / cobalt bar |
 | `--ok` / `--ok-soft` | readiness ok |
 | `--warn` / `--warn-soft` | missing step, draft |
 | `--danger` / `--danger-soft` | errors, destructive |
-| `--radius` | 16px panel |
+| `--radius` | 16px sheet |
 | `--radius-sm` | 12px control |
 
 Dark theme: same token **names** — values in `styles.css` `[data-theme="dark"]` or equivalent.
@@ -61,12 +61,13 @@ Dark theme: same token **names** — values in `styles.css` `[data-theme="dark"]
 5. **Modal** is the only second layer over page.
 6. List height follows content — no giant empty card for one row.
 
-## Shell (topbar)
+## Shell (cabinet)
 
-- Left: **Scorix** in Syne — hero-level, not eyebrow.
-- Right: segmented **Светлая | Тёмная** — not two secondary buttons.
-- Admin: **Scorix · Админка**
-- Padding: `--space-3` / `--space-4`
+- Left sticky **rail ~220px** with character: Syne brand + cobalt inset bar on active (not pill fill) + 5 nav links + Выйти.
+- White content **sheet** on paper background (margin + radius + soft shadow).
+- Top compact bar: balance chip + theme (mobile: section select).
+- Admin: same rail pattern; menu label **Сервисы голоса** for LLM/ASR/TTS.
+- Padding: `--space-3` / `--space-4` / `--space-5`
 
 ## Components
 
