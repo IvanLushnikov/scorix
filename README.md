@@ -6,7 +6,7 @@
 
 ## Демо (GitHub Pages)
 
-https://ivanlushnikov.github.io/Scorix/
+https://ivanlushnikov.github.io/scorix/
 
 На Pages кабинет ходит в API `https://37.27.2.86.sslip.io` (сервер по IP, пока свой домен не подключен; см. `index.html` → `SCORIX_API_BASE`).  
 На своём домене кабинет ожидается по пути `/lk/` (лендинг на `/`) — same-origin `/api`. Локально и на GitHub Pages префикс `/lk` не нужен.
